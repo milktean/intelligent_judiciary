@@ -1,5 +1,6 @@
 from http import HTTPStatus
 import dashscope
+dashscope.api_key="sk-d11a354da5f54a85a353072f24afb6e7"
 
 
 def call_with_messages():
@@ -7,7 +8,7 @@ def call_with_messages():
                 {'role': 'user', 'content': '''
 **Task:**
 
-Evaluate the performance of a legal language model in a judicial consultation dialogue. Carefully read the conversation between the user and the assistant (label), and assess the assistant's response based on the criteria of accuracy, completeness, relevance, and effectiveness.
+Evaluate the performance of a legal language model in a judicial consultation dialogue. Carefully read the conversation between the user and the assistant (infer), and assess the assistant's response based on the criteria of accuracy, completeness, relevance, and effectiveness.
 
 **Instructions:**
 
@@ -84,7 +85,7 @@ Provide the evaluation in the following JSON format:
 
 **Content:**
 
-Evaluate the assistant's response (label) in the following conversation:
+Evaluate the assistant's response (infer) in the following conversation:
 
 ```json
 {
@@ -105,6 +106,10 @@ Evaluate the assistant's response (label) in the following conversation:
     "label": {
         "role": "assistant",
         "content": "根据《民法典》的规定，要求结婚的男女双方应当亲自到婚姻登记机关申请结婚登记。具体手续包括：\n\n1. 男女双方携带本人的身份证或户口簿、未婚证明等证明材料前往婚姻登记机关；\n2. 填写结婚登记申请表，并签署结婚登记申请书；\n3. 提供双方固定住所、职业、联系方式等相关信息；\n4. 双方自愿声明结婚意愿，进行个人信息确认和登记确认。\n\n具体手续可能因地区而异，建议你到当地的民政局或婚姻登记机关咨询具体的办理流程。\n\n祝你好运！"
+    },
+    "infer": {
+        "role": "assistant",
+        "content": "根据《民法典》的规定，要求结婚的男女双方应当亲自到婚姻登记机关申请结婚登记。具体手续包括：\n\n1. 男女双方携带本人的身份证或户口簿、未婚证明等证明材料前往婚姻登记机关；\n2. 填写结婚登记申请表，并签署结婚登记申请书；\n3. 提供双方固定住所、职业、联系方式等相关信息；\n4. 双方自愿声明结婚意愿，进行个人信息确认和登记确认。\n\n具体手续可能因地区而异，建议你到当地的民政局或婚姻登记机关咨询具体的办理流程。\n\n祝你好运！"  
     },
     "id": 0
 }
