@@ -9,7 +9,7 @@ import jieba  # 导入 jieba 进行中文分词
 from rouge_chinese import Rouge  # 导入 rouge-chinese 库
 
 # 设置 Dashscope API 密钥
-dashscope.api_key = "sk-d11a354da5f54a85a353072f24afb6e7"  # 请确保安全管理您的 API 密钥
+dashscope.api_key = ""  # 请确保安全管理您的 API 密钥
 
 def load_file(file_path, is_json=True):
     """加载文件内容"""
