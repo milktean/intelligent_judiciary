@@ -9,7 +9,8 @@ project_root = os.path.abspath(os.path.join(current_dir, os.pardir))
 sys.path.insert(0, project_root)
 
 from models.farui_model import FaruiPlusModel  # 使用绝对导入
-
+from models.qwen2_model import ChatModelClient
+local_url='http://localhost:8000'
 def load_instruction(instruction_file_path):
     """加载评估指令文件内容"""
     if not os.path.exists(instruction_file_path):
@@ -40,6 +41,9 @@ def get_model_instance(model_name, api_key):
     """
     if model_name.lower() == 'farui-plus':
         return FaruiPlusModel(api_key)
+    elif model_name.lower() == 'local_model':
+        print('chat')
+        return ChatModelClient(local_url,api_key)
     else:
         raise ValueError(f"不支持的模型名称: {model_name}")
 

@@ -1,1 +1,1 @@
-python batch_evaluation.py --input evaluation_data.json --output evaluation_results.json --prompt evaluation_prompt.txt
+python batch_evaluation.py --input dialog_results_qwen.json --output evaluation_results.json --prompt ../instructions/evaluation_prompt.txt
