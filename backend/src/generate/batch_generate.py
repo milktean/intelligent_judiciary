@@ -8,8 +8,9 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(current_dir, os.pardir))
 sys.path.insert(0, project_root)
 
-from models.farui_model import FaruiPlusModel  # 使用绝对导入
+from models.tongyi import TongyiModel  # 使用绝对导入
 from models.qwen2_model import ChatModelClient
+from models.huoshan_model import HuoshanModel
 local_url='http://localhost:8000'
 def load_instruction(instruction_file_path):
     """加载评估指令文件内容"""
@@ -31,21 +32,30 @@ def save_results(results, output_path):
         json.dump(results, file, ensure_ascii=False, indent=4)
     print(f"评测结果已保存到: {output_path}")
 
-def get_model_instance(model_name, api_key):
+def get_model_instance(model_type, model_name):
     """
-    根据模型名称返回对应的模型实例。
+    根据模型类型和模型名称返回对应的模型实例。
 
-    :param model_name: 模型名称，如 'farui-plus'
+    :param model_type: 模型类型，如 'qwen', 'openai'
+    :param model_name: 具体的模型名称，如 'qwen-turbo', 'openai-gpt'
     :param api_key: API 密钥
     :return: 模型实例
     """
-    if model_name.lower() == 'farui-plus':
-        return FaruiPlusModel(api_key)
-    elif model_name.lower() == 'local_model':
-        print('chat')
-        return ChatModelClient(local_url,api_key)
+    model_type = model_type.lower()
+    model_name = model_name.lower()
+
+    if model_type == 'qwen':
+        return TongyiModel(model_name)
+    # elif model_type == 'openai':
+    #     # 假设您有一个 OpenAIModel 类
+    #     return OpenAIModel(api_key, model_name)
+    elif model_type == 'huoshan':
+        return HuoshanModel(model_name)
+    elif model_type == 'local':
+        return ChatModelClient(local_url)
     else:
-        raise ValueError(f"不支持的模型名称: {model_name}")
+        raise ValueError(f"不支持的模型类型: {model_type}")
+
 
 def main():
     # 解析命令行参数
@@ -54,10 +64,10 @@ def main():
     parser.add_argument('--output', type=str, required=True, help='评测结果的输出路径 (JSON文件)')
     parser.add_argument('--instruction', type=str, required=True, help='评估指令文件路径 (文本文件)')
     parser.add_argument('--field', type=str, choices=['label', 'infer'], default='label', help='模型结果保存的字段 (label 或 infer)')
-    parser.add_argument('--model', type=str, required=True, help='使用的模型名称，如 farui-plus')
-    parser.add_argument('--api_key', type=str, required=True, help='Dashscope API 密钥')
+    parser.add_argument('--model_type', type=str, required=True, help='使用的模型类型，如 qwen, openai')
+    parser.add_argument('--model', type=str, required=True, help='具体的模型名称，如 qwen-turbo, openai-gpt')
+    # parser.add_argument('--api_key', type=str, required=True, help='Dashscope API 密钥')
     args = parser.parse_args()
-
     # 加载评估指令
     try:
         instruction = load_instruction(args.instruction)
@@ -77,10 +87,11 @@ def main():
 
     # 实例化对应的模型类
     try:
-        model = get_model_instance(args.model, args.api_key)
+        model = get_model_instance(args.model_type,args.model)
     except ValueError as e:
         print(e)
         return
+    model_name=args.model
 
     # 遍历每个案例，调用模型生成回复并保存到指定字段
     for case in test_data:

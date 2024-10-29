@@ -1,15 +1,22 @@
 from http import HTTPStatus
+import os
 import dashscope
 from .base_model import BaseModel
 
-class FaruiPlusModel(BaseModel):
-    def __init__(self, api_key):
+
+class TongyiModel(BaseModel):
+    def __init__(self, model_name):
         """
         初始化 FaruiPlusModel。
 
         :param api_key: Dashscope API 密钥。
         """
+        api_key = os.getenv('DASHSCOPE_API_KEY')
+        if not api_key:
+            raise ValueError("环境变量 'DASHSCOPE_API_KEY' 未设置。")
         dashscope.api_key = api_key
+        self.model_name = model_name
+
 
     def generate_response(self, instruction, conversation):
         """
@@ -31,7 +38,7 @@ class FaruiPlusModel(BaseModel):
 
             # 调用 Dashscope 的 Generation API
             response = dashscope.Generation.call(
-                "farui-plus",
+                self.model_name,
                 messages=messages,
                 result_format='message',  # 设置结果为"message"格式
             )

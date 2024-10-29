@@ -1,15 +1,36 @@
+import os
 import json
 import argparse
 import re
 from http import HTTPStatus
 from tqdm import tqdm
-from bert_score import score
+from bert_score import BERTScorer
 import dashscope
-import jieba  # 导入 jieba 进行中文分词
-from rouge_chinese import Rouge  # 导入 rouge-chinese 库
+import jieba
+from rouge_chinese import Rouge
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import partial
+import logging
+from tenacity import retry, stop_after_attempt, wait_fixed
 
-# 设置 Dashscope API 密钥
-dashscope.api_key = ""  # 请确保安全管理您的 API 密钥
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
+
+# 设置统一的 Hugging Face Transformers 缓存目录
+os.environ['TRANSFORMERS_CACHE'] = os.path.expanduser('~/.cache/huggingface/transformers')
+
+# 从环境变量中读取 Dashscope API 密钥
+dashscope.api_key = os.getenv("DASHSCOPE_API_KEY", "")  # 使用 os.getenv 获取环境变量
+
+# 检查是否成功读取密钥
+if not dashscope.api_key:
+    raise ValueError("Dashscope API 密钥未设置。请确保已将 DASHSCOPE_API_KEY 作为环境变量进行设置。")
 
 def load_file(file_path, is_json=True):
     """加载文件内容"""
@@ -21,25 +42,6 @@ def save_file(data, file_path):
     with open(file_path, 'w', encoding='utf-8') as file:
         json.dump(data, file, ensure_ascii=False, indent=4)
 
-def call_dashscope_api(prompt, case):
-    """调用 Dashscope API 进行评估"""
-    # 替换占位符
-    conversation = json.dumps(case["conversation"], ensure_ascii=False, indent=2)
-    model_output = json.dumps(case["infer"], ensure_ascii=False, indent=2)
-    prompt = prompt.replace("{{conversation_history}}", conversation)
-    prompt = prompt.replace("{{model_output}}", model_output)
-    
-    messages = [
-        {'role': 'user', 'content': prompt}
-    ]
-    
-    response = dashscope.Generation.call(
-        "farui-plus",
-        messages=messages,
-        result_format='message'
-    )
-    return parse_api_response(response)
-
 def parse_api_response(response):
     """解析 Dashscope API 响应"""
     if response.status_code == HTTPStatus.OK:
@@ -50,10 +52,10 @@ def parse_api_response(response):
             'content' in response.output['choices'][0]['message']):
             return response.output['choices'][0]['message']['content'].strip()
         else:
-            print(f"响应结构不符合预期: {response.output}")
+            logging.warning(f"响应结构不符合预期: {response.output}")
             return None
     else:
-        print('请求失败 - Request id: %s, Status code: %s, error code: %s, error message: %s' % (
+        logging.error('请求失败 - Request id: %s, Status code: %s, error code: %s, error message: %s' % (
             getattr(response, 'request_id', 'N/A'),
             getattr(response, 'status_code', 'N/A'),
             getattr(response, 'code', 'N/A'),
@@ -68,12 +70,12 @@ def extract_json_from_string(response_str):
         return json_match.group()
     return None
 
-def calculate_metrics(reference, generated):
+def calculate_metrics(reference, generated, scorer, rouge):
     """计算评估指标，包括 ROUGE 和 BERTScore"""
     metrics = {}
     if reference and generated:
-        metrics['rouge'] = calculate_rouge(reference, generated)
-        metrics['bertscore'] = calculate_bertscore(reference, generated)
+        metrics['rouge'] = calculate_rouge(reference, generated, rouge)
+        metrics['bertscore'] = calculate_bertscore(reference, generated, scorer)
     return metrics
 
 def tokenize(text):
@@ -85,7 +87,7 @@ def remove_punctuation(text):
     punctuation = '，。、；：！？（）《》“”‘’—…-'
     return ''.join(char for char in text if char not in punctuation)
 
-def calculate_rouge(reference, generated):
+def calculate_rouge(reference, generated, rouge):
     """使用 rouge-chinese 计算 ROUGE 分数，适用于中文文本"""
     # 去除标点符号
     reference = remove_punctuation(reference)
@@ -95,8 +97,7 @@ def calculate_rouge(reference, generated):
     reference = tokenize(reference)
     generated = tokenize(generated)
     
-    # 初始化 ROUGE 评估器
-    rouge = Rouge()
+    # 计算 ROUGE 分数
     scores = rouge.get_scores(generated, reference)
     
     # 由于 rouge.get_scores 返回的是一个列表，我们取第一个元素
@@ -117,31 +118,56 @@ def calculate_rouge(reference, generated):
                    "fmeasure": scores.get('rouge-l', {}).get('f', 0.0)}
     }
 
-def calculate_bertscore(reference, generated, lang='zh', model_type='bert-base-chinese'):
+def calculate_bertscore(reference, generated, scorer):
     """计算 BERTScore，适用于中文文本"""
-    P, R, F1 = score([generated], [reference], lang=lang, model_type=model_type, rescale_with_baseline=True)
+    P, R, F1 = scorer.score([generated], [reference])
     return {
         "Precision": P.mean().item(),
         "Recall": R.mean().item(),
         "F1": F1.mean().item()
     }
 
-def process_case(case, prompt):
+@retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
+def call_dashscope_api(prompt, case):
+    """调用 Dashscope API 进行评估"""
+    # 替换占位符
+    conversation = json.dumps(case["conversation"], ensure_ascii=False, indent=2)
+    model_output = json.dumps(case["infer"], ensure_ascii=False, indent=2)
+    prompt_filled = prompt.replace("{{conversation_history}}", conversation)
+    prompt_filled = prompt_filled.replace("{{model_output}}", model_output)
+    
+    messages = [
+        {'role': 'user', 'content': prompt_filled}
+    ]
+    
+    response = dashscope.Generation.call(
+        "farui-plus",
+        messages=messages,
+        result_format='message'
+    )
+    return parse_api_response(response)
+
+def process_case(case, prompt, scorer, rouge):
     """处理单个评估案例"""
-    evaluation_result_str = call_dashscope_api(prompt, case)
+    try:
+        evaluation_result_str = call_dashscope_api(prompt, case)
+    except Exception as e:
+        logging.error(f"调用 Dashscope API 时发生错误 (案例ID: {case.get('id', None)}): {e}")
+        return None
+
     if not evaluation_result_str:
-        print(f"空的模型输出，跳过案例ID: {case.get('id', None)}")
+        logging.warning(f"空的模型输出，跳过案例ID: {case.get('id', None)}")
         return None
     
     json_str = extract_json_from_string(evaluation_result_str)
     if not json_str:
-        print(f"未找到有效的 JSON，跳过案例ID: {case.get('id', None)}")
+        logging.warning(f"未找到有效的 JSON，跳过案例ID: {case.get('id', None)}")
         return None
     
     try:
         evaluation_result = json.loads(json_str)
     except json.JSONDecodeError as e:
-        print(f"JSON解析错误: {e}")
+        logging.error(f"JSON解析错误 (案例ID: {case.get('id', None)}): {e}")
         return None
     
     # 计算平均得分
@@ -157,10 +183,22 @@ def process_case(case, prompt):
     # 计算其他指标（如 ROUGE 和 BERTScore）
     reference = case.get('label', {}).get('content', '').strip()
     generated = case.get('infer', {}).get('content', '').strip()
-    evaluation_result.update(calculate_metrics(reference, generated))
+    evaluation_result.update(calculate_metrics(reference, generated, scorer, rouge))
 
     evaluation_result["case_id"] = case.get('id', None)
     return evaluation_result
+
+def preload_models():
+    """预先加载 BERTScore 和 ROUGE 模型"""
+    logging.info("预加载 BERTScore 模型，以避免多线程重复下载...")
+    global scorer
+    scorer = BERTScorer(lang='zh', rescale_with_baseline=True, model_type='bert-base-chinese')
+    logging.info("BERTScore 模型预加载完成。")
+    
+    logging.info("初始化 ROUGE 评估器...")
+    global rouge
+    rouge = Rouge()
+    logging.info("ROUGE 评估器初始化完成。")
 
 def main():
     parser = argparse.ArgumentParser(description='批量评估脚本')
@@ -169,23 +207,44 @@ def main():
     parser.add_argument('--prompt', type=str, required=True, help='评估提示文件路径')
     args = parser.parse_args()
 
+    # 设置固定的并行线程数
+    NUM_THREADS = 4  # 根据您的需求调整此值
+
+    # 预加载模型
+    preload_models()
+
     # 加载评估提示和数据
     prompt = load_file(args.prompt, is_json=False)
     evaluation_data = load_file(args.input, is_json=True)
 
     results = []
 
-    # 使用 tqdm 显示进度条处理案例
-    for case in tqdm(evaluation_data, desc="评估进度"):
-        result = process_case(case, prompt)
-        if result:
-            results.append(result)
-            print(f"案例ID: {result['case_id']}, 平均得分: {result['average_score']}")
-            print(f"ROUGE: {result.get('rouge', {})}")
-            print(f"BERTScore: {result.get('bertscore', {})}")
+    # 初始化 ROUGE 评估器
+    # rouge 已在 preload_models 中初始化
+
+    # 使用 ThreadPoolExecutor 并行处理案例
+    with ThreadPoolExecutor(max_workers=NUM_THREADS) as executor:
+        # 使用 partial 函数固定 prompt, scorer, rouge 参数
+        process_func = partial(process_case, prompt=prompt, scorer=scorer, rouge=rouge)
+        
+        # 提交所有任务
+        futures = [executor.submit(process_func, case) for case in evaluation_data]
+        
+        # 使用 tqdm 显示进度条
+        for future in tqdm(as_completed(futures), total=len(futures), desc="评估进度"):
+            try:
+                result = future.result()
+                if result:
+                    results.append(result)
+                    logging.info(f"案例ID: {result['case_id']}, 平均得分: {result['average_score']}")
+                    logging.info(f"ROUGE: {result.get('rouge', {})}")
+                    logging.info(f"BERTScore: {result.get('bertscore', {})}")
+            except Exception as e:
+                logging.error(f"处理案例时发生错误: {e}")
 
     # 保存评测结果
     save_file(results, args.output)
+    logging.info("评测结果已保存。")
     print(json.dumps(results, ensure_ascii=False, indent=4))
 
 if __name__ == '__main__':

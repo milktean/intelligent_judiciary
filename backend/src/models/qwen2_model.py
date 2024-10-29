@@ -3,7 +3,7 @@ import json
 from http import HTTPStatus
 
 class ChatModelClient:
-    def __init__(self, api_url, api_key=None):
+    def __init__(self, api_url):
         """
         初始化 ChatModelClient。
 
